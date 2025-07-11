@@ -44,12 +44,12 @@ async def check_dispo():
             sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
         """)
 
-        # remplis les champs texte
+        # remplis les autres champs obligatoires
         await page.fill("input[name=nome]", DUMMY["nome"], timeout=5000)
         await page.fill("input[name=cognome]", DUMMY["cognome"], timeout=5000)
         await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"], timeout=5000)
 
-        # force activation du bouton
+        # force le bouton Continua et clique
         await page.evaluate("""
             const btn = document.querySelector("button[value='continua']");
             if (btn) btn.removeAttribute('disabled');
@@ -60,22 +60,29 @@ async def check_dispo():
         await page.wait_for_url("**/sceltaComune**", timeout=10000)
         await page.wait_for_load_state("networkidle", timeout=10000)
 
-        # ---- ici on simule un vrai typing pour réveiller le typeahead ----
+        # ─── Supprime le modal et l’overlay qui bloquent la page ───
+        await page.evaluate("""
+            const ov = document.querySelector('.black-overlay');
+            if (ov) ov.remove();
+            const md = document.getElementById('messageModalBox');
+            if (md) md.remove();
+        """)
+
+        # simule un vrai typing pour déclencher le typeahead
         await page.click("#comuneResidenzaInput", timeout=5000)
         await page.type("#comuneResidenzaInput", DUMMY["comune"], delay=100, timeout=5000)
 
-        # on attend la dropdown des suggestions
+        # attends et clique la suggestion
         await page.wait_for_selector(
-            "comune-typeahead ul.typeahead.dropdown-menu li span.filtrable",
+            "comune-typeahead ul.typeahead.dropdown-menu li:has-text('ROMA')",
             timeout=5000
         )
-        # on choisit l'item contenant 'ROMA'
         await page.click(
             "comune-typeahead ul.typeahead.dropdown-menu li:has-text('ROMA')",
             timeout=5000
         )
 
-        # on force à nouveau le bouton Continua
+        # force de nouveau Continua et clique
         await page.evaluate("""
             const btn2 = document.querySelector("button[value='continua']");
             if (btn2) btn2.removeAttribute('disabled');
