@@ -14,14 +14,14 @@ def send_telegram(text: str):
     )
 
 DUMMY = {
-    "motivo":       "Primo Documento",
-    "nome":         "Mario",
-    "cognome":      "Rossi",
-    "codice_fiscale":"RSSMRA80A01H501X",
-    "comune":       "ROMA"
+    "motivo_value":  "1",   # valeur 1 = Primo Documento
+    "comune":         "ROMA"
 }
 
-START_URL = "https://www.prenotazionicie.interno.gov.it/cittadino/n/sc/wizardAppuntamentoCittadino/home"
+START_URL = (
+    "https://www.prenotazionicie.interno.gov.it"
+    "/cittadino/n/sc/wizardAppuntamentoCittadino/home"
+)
 
 async def check_dispo():
     async with async_playwright() as p:
@@ -32,15 +32,17 @@ async def check_dispo():
         await page.goto(START_URL)
         await page.wait_for_load_state("networkidle", timeout=30000)
 
-        # ATTENDRE QUE LE <select> SOIT DANS LE DOM (pas besoin qu’il soit visible)
+        # ============ Injection JS pour forcer le <select> masqué ============
         await page.wait_for_selector("#selectTipoDocumento", state="attached", timeout=30000)
-        # FORCER LE CHOIX PAR VALUE (1 = Primo Documento)
-        await page.select_option("#selectTipoDocumento", value="1")
+        await page.evaluate(f"""
+            const sel = document.getElementById('selectTipoDocumento');
+            sel.value = '{DUMMY["motivo_value"]}';
+            sel.dispatchEvent(new Event('input',  {{ bubbles: true }}));
+            sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
+        """)
+        # ======================================================================
 
-        # REMPLIR LES AUTRES CHAMPS
-        await page.fill("input[name=nome]", DUMMY["nome"])
-        await page.fill("input[name=cognome]", DUMMY["cognome"])
-        await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"])
+        # On clique sur Continuer
         await page.click("button:has-text('Continua')")
 
         # ─── STEP 2 ───
@@ -54,9 +56,9 @@ async def check_dispo():
         await page.wait_for_selector("label.sr-only[for^='sede-']", timeout=30000)
         dispo = []
         for lbl in await page.query_selector_all("label.sr-only[for^='sede-']"):
-            tr     = await lbl.evaluate_handle("e => e.closest('tr')")
-            cells  = await tr.query_selector_all("td")
-            texts  = [await c.inner_text() for c in cells]
+            tr    = await lbl.evaluate_handle("e => e.closest('tr')")
+            cells = await tr.query_selector_all("td")
+            texts = [await c.inner_text() for c in cells]
             dispo.append(texts)
 
         await browser.close()
