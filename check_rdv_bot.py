@@ -23,44 +23,40 @@ DUMMY = {
 }
 
 START_URL = (
-    "https://www.prenotazionicie.interno.gov.it"
-    "/cittadino/n/sc/wizardAppuntamentoCittadino/sceltaComune"
+    "https://www.prenotazionicie.interno.gov.it/cittadino/n/sc/wizardAppuntamentoCittadino/home?locale=it"
 )
 
 async def check_dispo():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
-        await page.goto(START_URL)
 
-        # remplissage du formulaire
-        await page.select_option(
-            "select[name=motivoAppuntamento]",
-            label=DUMMY["motivo"]
-        )
+        # ─── STEP 1: home du wizard ───
+        await page.goto(START_URL)
+        # on s’assure que le select est présent
+        await page.wait_for_selector("select[name=motivoAppuntamento]", timeout=15000)
+        await page.select_option("select[name=motivoAppuntamento]", label=DUMMY["motivo"])
         await page.fill("input[name=nome]", DUMMY["nome"])
         await page.fill("input[name=cognome]", DUMMY["cognome"])
         await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"])
+        # on peut ici résoudre manuellement le captcha ou restaurer un cookie
+        await page.click("button:has-text('Continua')")
+
+        # ─── STEP 2: sélection du Comune ───
+        await page.wait_for_url("**/sceltaComune**", timeout=15000)
+        await page.wait_for_selector("input[aria-label='Comune']", timeout=15000)
         await page.fill("input[aria-label='Comune']", DUMMY["comune"])
         await page.click("//li[contains(., 'ROMA')]")
-
-        # poursuivre
         await page.click("button:has-text('Continua')")
-        await page.wait_for_selector(
-            "label.sr-only[for^='sede-']",
-            timeout=10000
-        )
+
+        # ─── STEP 3: liste des Sede ───
+        await page.wait_for_selector("label.sr-only[for^='sede-']", timeout=15000)
 
         dispo = []
-        rows = await page.query_selector_all(
-            "label.sr-only[for^='sede-']"
-        )
-        for lbl in rows:
-            parent = await lbl.evaluate_handle(
-                "e => e.closest('tr')"
-            )
-            cells = await parent.query_selector_all("td")
-            texts = [await c.inner_text() for c in cells]
+        for lbl in await page.query_selector_all("label.sr-only[for^='sede-']"):
+            parent = await lbl.evaluate_handle("e => e.closest('tr')")
+            cells  = await parent.query_selector_all("td")
+            texts  = [await c.inner_text() for c in cells]
             dispo.append(texts)
 
         await browser.close()
