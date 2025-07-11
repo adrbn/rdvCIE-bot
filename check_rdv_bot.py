@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import requests
 from playwright.async_api import async_playwright
 
@@ -35,7 +36,6 @@ async def check_dispo():
         await page.goto(START_URL)
         await page.wait_for_load_state("networkidle", timeout=5000)
 
-        # Select masqué
         await page.wait_for_selector("#selectTipoDocumento", state="attached", timeout=5000)
         await page.evaluate(f"""
             const sel = document.getElementById('selectTipoDocumento');
@@ -44,29 +44,26 @@ async def check_dispo():
             sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
         """)
 
-        # Remplissage texte
         await page.fill("input[name=nome]", DUMMY["nome"], timeout=3000)
         await page.fill("input[name=cognome]", DUMMY["cognome"], timeout=3000)
         await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"], timeout=3000)
 
-        # Activation + clic Continuer
+        # brute-force activation du bouton
         await page.evaluate("""
-            const btn = document.querySelector("button[value='continua']");
-            if (btn) btn.removeAttribute('disabled');
+            const b = document.querySelector("button[value='continua']");
+            if (b) b.removeAttribute('disabled');
         """)
         await page.click("button[value='continua']", timeout=5000)
 
         # STEP 2
         await page.wait_for_url("**/sceltaComune**", timeout=5000)
         await page.wait_for_load_state("networkidle", timeout=5000)
-
-        # Suppression overlay/modal
+        # retirer overlay/modal
         await page.evaluate("""
             document.querySelectorAll('.black-overlay, #messageModalBox')
-                    .forEach(el => el.remove());
+                    .forEach(e=>e.remove());
         """)
 
-        # Typeahead Comune
         await page.click("#comuneResidenzaInput", timeout=3000)
         await page.type("#comuneResidenzaInput", DUMMY["comune"], delay=100, timeout=3000)
         await page.wait_for_selector(
@@ -78,10 +75,9 @@ async def check_dispo():
             timeout=3000
         )
 
-        # Activation + clic Continuer
         await page.evaluate("""
-            const btn2 = document.querySelector("button[value='continua']");
-            if (btn2) btn2.removeAttribute('disabled');
+            const b2 = document.querySelector("button[value='continua']");
+            if (b2) b2.removeAttribute('disabled');
         """)
         await page.click("button[value='continua']", timeout=5000)
 
@@ -89,10 +85,10 @@ async def check_dispo():
         await page.wait_for_selector("label.sr-only[for^='sede-']", timeout=5000)
         dispo = []
         for lbl in await page.query_selector_all("label.sr-only[for^='sede-']"):
-            tr    = await lbl.evaluate_handle("e => e.closest('tr')")
+            tr    = await lbl.evaluate_handle("e=>e.closest('tr')")
             cells = await tr.query_selector_all("td")
             texts = [await c.inner_text() for c in cells][:3]
-            if len(texts) == 3:
+            if len(texts)==3:
                 sede, indirizzo, date = (t.strip() for t in texts)
                 dispo.append((sede, indirizzo, date))
 
@@ -102,10 +98,14 @@ async def check_dispo():
 async def main():
     try:
         results = await check_dispo()
-        if results:
-            msg = "🔔 Nouveaux créneaux dispos :\n" + "\n".join(
-                f"- {s} | {i} | {d}" for s, i, d in results
-            )
+        # on ne garde que ceux qui contiennent une date au format dd/mm/yyyy
+        filtered = [
+            (s,i,d) for s,i,d in results
+            if re.search(r"\d{2}/\d{2}/\d{4}", d)
+        ]
+        if filtered:
+            lines = [f"- {s} | {i} | {d}" for s,i,d in filtered]
+            msg = "🔔 Nouveaux créneaux dispos :\n\n" + "\n\n".join(lines)
             send_telegram(msg)
     except Exception as e:
         send_telegram(f"❌ Erreur : {e}")
