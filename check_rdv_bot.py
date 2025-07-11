@@ -31,15 +31,21 @@ START_URL = (
     "/cittadino/n/sc/wizardAppuntamentoCittadino/home"
 )
 
+# Regex jour italien + date
+WEEKDAY_DATE_RE = re.compile(
+    r"^(lun(?:edì)?|mar(?:tedì)?|mer(?:coledì)?|gio(?:vedì)?|ven(?:erdì)?|sab(?:ato)?|dom(?:enica)?),\s*\d{2}/\d{2}/\d{4}",
+    re.IGNORECASE
+)
+
 async def check_dispo():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page    = await browser.new_page()
 
-        # STEP 1 — motif + infos personnelles
+        # STEP 1 — motif + infos
         await page.goto(START_URL)
         await page.wait_for_load_state("networkidle", timeout=5000)
-        await page.wait_for_selector("#selectTipoDocumento", state="attached", timeout=5000)
+        await page.wait_for_selector("#selectTipoDocumento", timeout=5000)
         await page.evaluate(f"""
             const sel = document.getElementById('selectTipoDocumento');
             sel.value = '{DUMMY['motivo_value']}';
@@ -52,13 +58,10 @@ async def check_dispo():
         await page.evaluate("document.querySelector(\"button[value='continua']\").removeAttribute('disabled')")
         await page.click("button[value='continua']", timeout=5000)
 
-        # STEP 2 — choix du Comune
+        # STEP 2 — Comune
         await page.wait_for_url("**/sceltaComune**", timeout=5000)
         await page.wait_for_load_state("networkidle", timeout=5000)
-        # on supprime overlay / modal
-        await page.evaluate("""
-            document.querySelectorAll('.black-overlay, #messageModalBox').forEach(el => el.remove());
-        """)
+        await page.evaluate("document.querySelectorAll('.black-overlay, #messageModalBox').forEach(el=>el.remove())")
         await page.click("#comuneResidenzaInput", timeout=3000)
         await page.type("#comuneResidenzaInput", DUMMY["comune"], delay=100, timeout=3000)
         await page.wait_for_selector(
@@ -72,24 +75,26 @@ async def check_dispo():
         await page.evaluate("document.querySelector(\"button[value='continua']\").removeAttribute('disabled')")
         await page.click("button[value='continua']", timeout=5000)
 
-        # STEP 3 — scraping des créneaux
+        # STEP 3 — scraping
         await page.wait_for_selector("label.sr-only[for^='sede-']", timeout=5000)
         dispo = []
         for lbl in await page.query_selector_all("label.sr-only[for^='sede-']"):
             tr    = await lbl.evaluate_handle("e => e.closest('tr')")
             cells = await tr.query_selector_all("td")
             texts = [await c.inner_text() for c in cells]
-            # On s'assure d'avoir au moins 4 colonnes : Sede, Adresse, Sans RDV, Date
             if len(texts) < 4:
                 continue
-            sede       = texts[0].strip()
-            indirizzo  = texts[1].strip()
-            sans_rdv   = texts[2].strip()  # "-" ou "non"
-            date_creneau = texts[3].strip()
-            # On ne garde que les vrais créneaux (date au format dd/MM/yyyy)
-            if not re.match(r"\d{2}/\d{2}/\d{4}", date_creneau):
+
+            sede        = texts[0].strip()
+            indirizzo   = texts[1].strip()
+            sans_rdv    = texts[2].strip()   # "-" ou "NO"
+            prima_disp  = texts[3].strip()
+
+            # Ne garder que si "prima_disp" matche un jour + date
+            if not WEEKDAY_DATE_RE.match(prima_disp):
                 continue
-            dispo.append((sede, indirizzo, sans_rdv, date_creneau))
+
+            dispo.append((sede, indirizzo, sans_rdv, prima_disp))
 
         await browser.close()
         return dispo
@@ -98,15 +103,15 @@ async def main():
     try:
         results = await check_dispo()
         if results:
-            msg = ["*🔔 Nouveaux créneaux disponibles :*\n"]
+            lines = ["*🔔 Nouveaux créneaux valides :*\n"]
             for sede, adr, sans, date in results:
-                msg.append(
+                lines.append(
                     f"*{sede}*\n"
-                    f"  - Adresse : _{adr}_\n"
-                    f"  - Sans RDV : `{sans}`\n"
-                    f"  - Date : *{date}*\n"
+                    f"  - Adresse       : _{adr}_\n"
+                    f"  - Sans RDV      : `{sans}`\n"
+                    f"  - *Date dispo* : *{date}*\n"
                 )
-            send_telegram("\n".join(msg))
+            send_telegram("\n".join(lines))
     except Exception as e:
         send_telegram(f"❌ Erreur : {e}")
 
