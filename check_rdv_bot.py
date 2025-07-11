@@ -8,18 +8,17 @@ TELEGRAM_TOKEN   = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 def send_telegram(text: str):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, data={
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text
-    })
+    requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+        data={"chat_id": TELEGRAM_CHAT_ID, "text": text}
+    )
 
 DUMMY = {
-    "motivo": "Primo Documento",
-    "nome": "Mario",
-    "cognome": "Rossi",
-    "codice_fiscale": "RSSMRA80A01H501X",
-    "comune": "ROMA"
+    "motivo":       "Primo Documento",
+    "nome":         "Mario",
+    "cognome":      "Rossi",
+    "codice_fiscale":"RSSMRA80A01H501X",
+    "comune":       "ROMA"
 }
 
 START_URL = "https://www.prenotazionicie.interno.gov.it/cittadino/n/sc/wizardAppuntamentoCittadino/home"
@@ -33,15 +32,12 @@ async def check_dispo():
         await page.goto(START_URL)
         await page.wait_for_load_state("networkidle", timeout=30000)
 
-        # on attend juste que le <select> soit dans le DOM
+        # ATTENDRE QUE LE <select> SOIT DANS LE DOM (pas besoin qu’il soit visible)
         await page.wait_for_selector("#selectTipoDocumento", state="attached", timeout=30000)
-        # puis qu'il soit activé (non-disabled)
-        await page.wait_for_selector("#selectTipoDocumento:not([disabled])", timeout=30000)
+        # FORCER LE CHOIX PAR VALUE (1 = Primo Documento)
+        await page.select_option("#selectTipoDocumento", value="1")
 
-        # et enfin on choisit l'option
-        await page.select_option("#selectTipoDocumento", label=DUMMY["motivo"])
-
-        # on remplit les autres champs
+        # REMPLIR LES AUTRES CHAMPS
         await page.fill("input[name=nome]", DUMMY["nome"])
         await page.fill("input[name=cognome]", DUMMY["cognome"])
         await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"])
@@ -50,7 +46,6 @@ async def check_dispo():
         # ─── STEP 2 ───
         await page.wait_for_url("**/sceltaComune**", timeout=30000)
         await page.wait_for_load_state("networkidle", timeout=30000)
-        await page.wait_for_selector("input[aria-label='Comune']", timeout=30000)
         await page.fill("input[aria-label='Comune']", DUMMY["comune"])
         await page.click("//li[contains(., 'ROMA')]")
         await page.click("button:has-text('Continua')")
@@ -59,8 +54,8 @@ async def check_dispo():
         await page.wait_for_selector("label.sr-only[for^='sede-']", timeout=30000)
         dispo = []
         for lbl in await page.query_selector_all("label.sr-only[for^='sede-']"):
-            parent = await lbl.evaluate_handle("e => e.closest('tr')")
-            cells  = await parent.query_selector_all("td")
+            tr     = await lbl.evaluate_handle("e => e.closest('tr')")
+            cells  = await tr.query_selector_all("td")
             texts  = [await c.inner_text() for c in cells]
             dispo.append(texts)
 
@@ -71,9 +66,9 @@ async def main():
     try:
         results = await check_dispo()
         if results:
-            msg = "🔔 Nouveaux créneaux dispos :\n"
-            for sede, indirizzo, date in results:
-                msg += f"- {sede} | {indirizzo} | {date}\n"
+            msg = "🔔 Nouveaux créneaux dispos :\n" + "\n".join(
+                f"- {s} | {i} | {d}" for s,i,d in results
+            )
             send_telegram(msg)
     except Exception as e:
         send_telegram(f"❌ Erreur : {e}")
