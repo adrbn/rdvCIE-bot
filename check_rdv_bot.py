@@ -35,6 +35,7 @@ async def check_dispo():
         await page.goto(START_URL)
         await page.wait_for_load_state("networkidle", timeout=10000)
 
+        # injecte le select masqué
         await page.wait_for_selector("#selectTipoDocumento", state="attached", timeout=10000)
         await page.evaluate(f"""
             const sel = document.getElementById('selectTipoDocumento');
@@ -43,10 +44,12 @@ async def check_dispo():
             sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
         """)
 
+        # remplis les champs texte
         await page.fill("input[name=nome]", DUMMY["nome"], timeout=5000)
         await page.fill("input[name=cognome]", DUMMY["cognome"], timeout=5000)
         await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"], timeout=5000)
 
+        # force activation du bouton
         await page.evaluate("""
             const btn = document.querySelector("button[value='continua']");
             if (btn) btn.removeAttribute('disabled');
@@ -57,21 +60,22 @@ async def check_dispo():
         await page.wait_for_url("**/sceltaComune**", timeout=10000)
         await page.wait_for_load_state("networkidle", timeout=10000)
 
-        # 1) on remplit le champ textuel
-        await page.fill("#comuneResidenzaInput", DUMMY["comune"], timeout=5000)
-        # 2) on dispatch l'input event pour déclencher le dropdown
-        await page.dispatch_event("#comuneResidenzaInput", "input")
-        # 3) on attend la liste : ul.typeahead.dropdown-menu
+        # ---- ici on simule un vrai typing pour réveiller le typeahead ----
+        await page.click("#comuneResidenzaInput", timeout=5000)
+        await page.type("#comuneResidenzaInput", DUMMY["comune"], delay=100, timeout=5000)
+
+        # on attend la dropdown des suggestions
         await page.wait_for_selector(
             "comune-typeahead ul.typeahead.dropdown-menu li span.filtrable",
             timeout=5000
         )
-        # 4) on clique sur ROMA
+        # on choisit l'item contenant 'ROMA'
         await page.click(
             "comune-typeahead ul.typeahead.dropdown-menu li:has-text('ROMA')",
             timeout=5000
         )
 
+        # on force à nouveau le bouton Continua
         await page.evaluate("""
             const btn2 = document.querySelector("button[value='continua']");
             if (btn2) btn2.removeAttribute('disabled');
