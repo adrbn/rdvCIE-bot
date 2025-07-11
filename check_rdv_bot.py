@@ -22,50 +22,63 @@ DUMMY = {
     "comune": "ROMA"
 }
 
-START_URL = "https://www.prenotazionicie.interno.gov.it/cittadino/n/sc/wizardAppuntamentoCittadino/home?locale=it"
+# NOTE : on enlève le ?locale=it
+START_URL = (
+    "https://www.prenotazionicie.interno.gov.it"
+    "/cittadino/n/sc/wizardAppuntamentoCittadino/home"
+)
 
 async def check_dispo():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
 
-        # ─── STEP 1: home du wizard ───
+        # ─── STEP 1 ───
         await page.goto(START_URL)
-        # on laisse Angular charger ses bundles
-        await page.wait_for_load_state("networkidle")
-        # maintenant on attend que le <select> soit visible
-        await page.wait_for_selector(
-            "select[name=motivoAppuntamento]",
-            state="visible",
-            timeout=30000
-        )
-        await page.select_option(
-            "select[name=motivoAppuntamento]",
-            label=DUMMY["motivo"]
-        )
+        await page.wait_for_load_state("networkidle", timeout=30000)
+
+        # debug rapide si pas de <select>
+        selects = await page.query_selector_all("select")
+        if not selects:
+            names = []
+            # lister les noms de tous les <select> pour debug
+            for s in await page.query_selector_all("select"):
+                names.append(await s.get_attribute("name"))
+            send_telegram(f"❌ Debug: je n’ai trouvé AUCUN <select>.\nPresent: {names}")
+            await browser.close()
+            return []
+
+        # on attend enfin le bon <select>
+        try:
+            await page.wait_for_selector(
+                "select[name=motivoAppuntamento]",
+                state="visible",
+                timeout=30000
+            )
+        except Exception:
+            # debug si ce select n’existe pas
+            names = [await s.get_attribute("name") for s in await page.query_selector_all("select")]
+            send_telegram(f"❌ Debug: pas de select[name=motivoAppuntamento], disponibles: {names}")
+            await browser.close()
+            return []
+
+        # tout va bien, on remplit
+        await page.select_option("select[name=motivoAppuntamento]", label=DUMMY["motivo"])
         await page.fill("input[name=nome]", DUMMY["nome"])
         await page.fill("input[name=cognome]", DUMMY["cognome"])
         await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"])
         await page.click("button:has-text('Continua')")
 
-        # ─── STEP 2: choix du Comune ───
+        # ─── STEP 2 ───
         await page.wait_for_url("**/sceltaComune**", timeout=30000)
-        await page.wait_for_load_state("networkidle")
-        await page.wait_for_selector(
-            "input[aria-label='Comune']",
-            state="visible",
-            timeout=30000
-        )
+        await page.wait_for_load_state("networkidle", timeout=30000)
+        await page.wait_for_selector("input[aria-label='Comune']", timeout=30000)
         await page.fill("input[aria-label='Comune']", DUMMY["comune"])
         await page.click("//li[contains(., 'ROMA')]")
         await page.click("button:has-text('Continua')")
 
-        # ─── STEP 3: récupération des dispo ───
-        await page.wait_for_selector(
-            "label.sr-only[for^='sede-']",
-            state="visible",
-            timeout=30000
-        )
+        # ─── STEP 3 ───
+        await page.wait_for_selector("label.sr-only[for^='sede-']", timeout=30000)
         dispo = []
         for lbl in await page.query_selector_all("label.sr-only[for^='sede-']"):
             parent = await lbl.evaluate_handle("e => e.closest('tr')")
@@ -85,7 +98,7 @@ async def main():
                 msg += f"- {sede} | {indirizzo} | {date}\n"
             send_telegram(msg)
     except Exception as e:
-        send_telegram(f"❌ Erreur : {e}")
+        send_telegram(f"❌ Erreur fatale : {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
