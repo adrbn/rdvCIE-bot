@@ -14,8 +14,11 @@ def send_telegram(text: str):
     )
 
 DUMMY = {
-    "motivo_value":  "1",   # valeur 1 = Primo Documento
-    "comune":         "ROMA"
+    "motivo_value":   "1",               # 1 = Primo Documento
+    "nome":            "Mario",
+    "cognome":         "Rossi",
+    "codice_fiscale":  "RSSMRA80A01H501X",
+    "comune":          "ROMA"
 }
 
 START_URL = (
@@ -30,30 +33,49 @@ async def check_dispo():
 
         # ─── STEP 1 ───
         await page.goto(START_URL)
-        await page.wait_for_load_state("networkidle", timeout=30000)
+        await page.wait_for_load_state("networkidle", timeout=15000)
 
-        # ============ Injection JS pour forcer le <select> masqué ============
-        await page.wait_for_selector("#selectTipoDocumento", state="attached", timeout=30000)
+        # injecte la valeur dans le <select> masqué
+        await page.wait_for_selector(
+            "#selectTipoDocumento",
+            state="attached",
+            timeout=15000
+        )
         await page.evaluate(f"""
             const sel = document.getElementById('selectTipoDocumento');
             sel.value = '{DUMMY["motivo_value"]}';
             sel.dispatchEvent(new Event('input',  {{ bubbles: true }}));
             sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
         """)
-        # ======================================================================
 
-        # On clique sur Continuer
+        # remplir les champs obligatoires
+        await page.fill("input[name=nome]", DUMMY["nome"])
+        await page.fill("input[name=cognome]", DUMMY["cognome"])
+        await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"])
+
+        # attendre que le bouton Continua soit activé
+        await page.wait_for_selector(
+            "button:has-text('Continua'):not([disabled])",
+            timeout=15000
+        )
         await page.click("button:has-text('Continua')")
 
         # ─── STEP 2 ───
-        await page.wait_for_url("**/sceltaComune**", timeout=30000)
-        await page.wait_for_load_state("networkidle", timeout=30000)
+        await page.wait_for_url("**/sceltaComune**", timeout=15000)
+        await page.wait_for_load_state("networkidle", timeout=15000)
         await page.fill("input[aria-label='Comune']", DUMMY["comune"])
         await page.click("//li[contains(., 'ROMA')]")
+        await page.wait_for_selector(
+            "button:has-text('Continua'):not([disabled])",
+            timeout=15000
+        )
         await page.click("button:has-text('Continua')")
 
         # ─── STEP 3 ───
-        await page.wait_for_selector("label.sr-only[for^='sede-']", timeout=30000)
+        await page.wait_for_selector(
+            "label.sr-only[for^='sede-']",
+            timeout=15000
+        )
         dispo = []
         for lbl in await page.query_selector_all("label.sr-only[for^='sede-']"):
             tr    = await lbl.evaluate_handle("e => e.closest('tr')")
@@ -69,7 +91,7 @@ async def main():
         results = await check_dispo()
         if results:
             msg = "🔔 Nouveaux créneaux dispos :\n" + "\n".join(
-                f"- {s} | {i} | {d}" for s,i,d in results
+                f"- {s} | {i} | {d}" for s, i, d in results
             )
             send_telegram(msg)
     except Exception as e:
