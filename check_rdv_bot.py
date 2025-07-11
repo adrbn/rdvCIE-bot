@@ -35,7 +35,7 @@ async def check_dispo():
         await page.goto(START_URL)
         await page.wait_for_load_state("networkidle", timeout=10000)
 
-        # injecte la valeur du <select> masqué
+        # Injector la valeur dans le <select> masqué
         await page.wait_for_selector("#selectTipoDocumento", state="attached", timeout=10000)
         await page.evaluate(f"""
             const sel = document.getElementById('selectTipoDocumento');
@@ -44,32 +44,38 @@ async def check_dispo():
             sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
         """)
 
-        # remplis les champs textuels
-        await page.fill("input[name=nome]", DUMMY["nome"])
-        await page.fill("input[name=cognome]", DUMMY["cognome"])
-        await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"])
+        # Remplir les champs texte
+        await page.fill("input[name=nome]", DUMMY["nome"], timeout=5000)
+        await page.fill("input[name=cognome]", DUMMY["cognome"], timeout=5000)
+        await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"], timeout=5000)
 
-        # hack : forcer l'activation du bouton even si reCAPTCHA non fait
+        # Forcer l'activation du bouton
         await page.evaluate("""
             const btn = document.querySelector("button[value='continua']");
             if (btn) btn.removeAttribute('disabled');
         """)
 
-        # clique sur “Continua”
+        # Cliquer sur "Continua"
         await page.click("button[value='continua']", timeout=10000)
 
         # ─── STEP 2 ───
         await page.wait_for_url("**/sceltaComune**", timeout=10000)
         await page.wait_for_load_state("networkidle", timeout=10000)
 
-        await page.fill("input[aria-label='Comune']", DUMMY["comune"])
-        await page.click("//li[contains(., 'ROMA')]", timeout=10000)
+        # Remplir le typeahead du Comune
+        await page.fill("#comuneResidenzaInput", DUMMY["comune"], timeout=5000)
+        # Attendre que la liste dropdown apparaisse et cliquer sur l'item correspondant
+        await page.wait_for_selector("comune-typeahead ul.typeahead li span.filtrable", timeout=5000)
+        # Cliquer sur le premier élément qui contient la ville
+        await page.click(f"comune-typeahead ul.typeahead li:has-text('{DUMMY['comune']}')", timeout=5000)
 
-        # même hack si nécessaire (généralement le bouton est activé)
+        # Forcer à nouveau le bouton Continua
         await page.evaluate("""
             const btn2 = document.querySelector("button[value='continua']");
             if (btn2) btn2.removeAttribute('disabled');
         """)
+
+        # Cliquer sur Continuer
         await page.click("button[value='continua']", timeout=10000)
 
         # ─── STEP 3 ───
