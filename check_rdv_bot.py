@@ -23,7 +23,8 @@ DUMMY = {
 }
 
 START_URL = (
-    "https://www.prenotazionicie.interno.gov.it/cittadino/n/sc/wizardAppuntamentoCittadino/home?locale=it"
+    "https://www.prenotazionicie.interno.gov.it"
+    "/cittadino/n/sc/wizardAppuntamentoCittadino/home?locale=it"
 )
 
 async def check_dispo():
@@ -33,13 +34,11 @@ async def check_dispo():
 
         # ─── STEP 1: home du wizard ───
         await page.goto(START_URL)
-        # on s’assure que le select est présent
         await page.wait_for_selector("select[name=motivoAppuntamento]", timeout=15000)
         await page.select_option("select[name=motivoAppuntamento]", label=DUMMY["motivo"])
         await page.fill("input[name=nome]", DUMMY["nome"])
         await page.fill("input[name=cognome]", DUMMY["cognome"])
         await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"])
-        # on peut ici résoudre manuellement le captcha ou restaurer un cookie
         await page.click("button:has-text('Continua')")
 
         # ─── STEP 2: sélection du Comune ───
