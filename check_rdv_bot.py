@@ -15,7 +15,7 @@ def send_telegram(text: str):
     })
 
 DUMMY = {
-    "motivo": "Primo Documento",      # label exact de l'option
+    "motivo": "Primo Documento",
     "nome": "Mario",
     "cognome": "Rossi",
     "codice_fiscale": "RSSMRA80A01H501X",
@@ -33,19 +33,15 @@ async def check_dispo():
         await page.goto(START_URL)
         await page.wait_for_load_state("networkidle", timeout=30000)
 
-        # On attend le select du motif par son id
-        await page.wait_for_selector(
-            "#selectTipoDocumento",
-            state="visible",
-            timeout=30000
-        )
-        # On choisit l'option par son label
-        await page.select_option(
-            "#selectTipoDocumento",
-            label=DUMMY["motivo"]
-        )
+        # on attend juste que le <select> soit dans le DOM
+        await page.wait_for_selector("#selectTipoDocumento", state="attached", timeout=30000)
+        # puis qu'il soit activé (non-disabled)
+        await page.wait_for_selector("#selectTipoDocumento:not([disabled])", timeout=30000)
 
-        # On remplit les autres champs
+        # et enfin on choisit l'option
+        await page.select_option("#selectTipoDocumento", label=DUMMY["motivo"])
+
+        # on remplit les autres champs
         await page.fill("input[name=nome]", DUMMY["nome"])
         await page.fill("input[name=cognome]", DUMMY["cognome"])
         await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"])
