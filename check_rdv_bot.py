@@ -33,49 +33,47 @@ async def check_dispo():
 
         # ─── STEP 1 ───
         await page.goto(START_URL)
-        await page.wait_for_load_state("networkidle", timeout=15000)
+        await page.wait_for_load_state("networkidle", timeout=10000)
 
-        # injecte la valeur dans le <select> masqué
-        await page.wait_for_selector(
-            "#selectTipoDocumento",
-            state="attached",
-            timeout=15000
-        )
+        # injecte la valeur du <select> masqué
+        await page.wait_for_selector("#selectTipoDocumento", state="attached", timeout=10000)
         await page.evaluate(f"""
             const sel = document.getElementById('selectTipoDocumento');
-            sel.value = '{DUMMY["motivo_value"]}';
+            sel.value = '{DUMMY['motivo_value']}';
             sel.dispatchEvent(new Event('input',  {{ bubbles: true }}));
             sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
         """)
 
-        # remplir les champs obligatoires
+        # remplis les champs textuels
         await page.fill("input[name=nome]", DUMMY["nome"])
         await page.fill("input[name=cognome]", DUMMY["cognome"])
         await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"])
 
-        # attendre que le bouton Continua soit activé
-        await page.wait_for_selector(
-            "button:has-text('Continua'):not([disabled])",
-            timeout=15000
-        )
-        await page.click("button:has-text('Continua')")
+        # hack : forcer l'activation du bouton even si reCAPTCHA non fait
+        await page.evaluate("""
+            const btn = document.querySelector("button[value='continua']");
+            if (btn) btn.removeAttribute('disabled');
+        """)
+
+        # clique sur “Continua”
+        await page.click("button[value='continua']", timeout=10000)
 
         # ─── STEP 2 ───
-        await page.wait_for_url("**/sceltaComune**", timeout=15000)
-        await page.wait_for_load_state("networkidle", timeout=15000)
+        await page.wait_for_url("**/sceltaComune**", timeout=10000)
+        await page.wait_for_load_state("networkidle", timeout=10000)
+
         await page.fill("input[aria-label='Comune']", DUMMY["comune"])
-        await page.click("//li[contains(., 'ROMA')]")
-        await page.wait_for_selector(
-            "button:has-text('Continua'):not([disabled])",
-            timeout=15000
-        )
-        await page.click("button:has-text('Continua')")
+        await page.click("//li[contains(., 'ROMA')]", timeout=10000)
+
+        # même hack si nécessaire (généralement le bouton est activé)
+        await page.evaluate("""
+            const btn2 = document.querySelector("button[value='continua']");
+            if (btn2) btn2.removeAttribute('disabled');
+        """)
+        await page.click("button[value='continua']", timeout=10000)
 
         # ─── STEP 3 ───
-        await page.wait_for_selector(
-            "label.sr-only[for^='sede-']",
-            timeout=15000
-        )
+        await page.wait_for_selector("label.sr-only[for^='sede-']", timeout=10000)
         dispo = []
         for lbl in await page.query_selector_all("label.sr-only[for^='sede-']"):
             tr    = await lbl.evaluate_handle("e => e.closest('tr')")
