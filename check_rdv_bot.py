@@ -21,10 +21,7 @@ DUMMY = {
     "comune":          "ROMA"
 }
 
-START_URL = (
-    "https://www.prenotazionicie.interno.gov.it"
-    "/cittadino/n/sc/wizardAppuntamentoCittadino/home"
-)
+START_URL = "https://www.prenotazionicie.interno.gov.it/cittadino/n/sc/wizardAppuntamentoCittadino/home"
 
 async def check_dispo():
     async with async_playwright() as p:
@@ -35,7 +32,7 @@ async def check_dispo():
         await page.goto(START_URL)
         await page.wait_for_load_state("networkidle", timeout=10000)
 
-        # Injector la valeur dans le <select> masqué
+        # injecte la valeur du <select> masqué
         await page.wait_for_selector("#selectTipoDocumento", state="attached", timeout=10000)
         await page.evaluate(f"""
             const sel = document.getElementById('selectTipoDocumento');
@@ -44,38 +41,40 @@ async def check_dispo():
             sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
         """)
 
-        # Remplir les champs texte
+        # remplir les champs obligatoires
         await page.fill("input[name=nome]", DUMMY["nome"], timeout=5000)
         await page.fill("input[name=cognome]", DUMMY["cognome"], timeout=5000)
         await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"], timeout=5000)
 
-        # Forcer l'activation du bouton
+        # forcer Continuer
         await page.evaluate("""
             const btn = document.querySelector("button[value='continua']");
             if (btn) btn.removeAttribute('disabled');
         """)
-
-        # Cliquer sur "Continua"
         await page.click("button[value='continua']", timeout=10000)
 
         # ─── STEP 2 ───
         await page.wait_for_url("**/sceltaComune**", timeout=10000)
         await page.wait_for_load_state("networkidle", timeout=10000)
 
-        # Remplir le typeahead du Comune
+        # remplir le typeahead du Comune
         await page.fill("#comuneResidenzaInput", DUMMY["comune"], timeout=5000)
-        # Attendre que la liste dropdown apparaisse et cliquer sur l'item correspondant
-        await page.wait_for_selector("comune-typeahead ul.typeahead li span.filtrable", timeout=5000)
-        # Cliquer sur le premier élément qui contient la ville
-        await page.click(f"comune-typeahead ul.typeahead li:has-text('{DUMMY['comune']}')", timeout=5000)
+        # **attendre** la liste des suggestions dans le ul.dropdown-menu, pas ul.typeahead
+        await page.wait_for_selector(
+            "comune-typeahead ul.dropdown-menu li span.filtrable",
+            timeout=5000
+        )
+        # cliquer sur l’élément <li> contenant "ROMA"
+        await page.click(
+            "comune-typeahead ul.dropdown-menu li:has-text('ROMA')",
+            timeout=5000
+        )
 
-        # Forcer à nouveau le bouton Continua
+        # forcer à nouveau Continuer
         await page.evaluate("""
             const btn2 = document.querySelector("button[value='continua']");
             if (btn2) btn2.removeAttribute('disabled');
         """)
-
-        # Cliquer sur Continuer
         await page.click("button[value='continua']", timeout=10000)
 
         # ─── STEP 3 ───
