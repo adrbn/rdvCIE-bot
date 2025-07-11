@@ -10,7 +10,11 @@ TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 def send_telegram(text: str):
     requests.post(
         f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        data={"chat_id": TELEGRAM_CHAT_ID, "text": text}
+        data={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": text,
+            "parse_mode": "Markdown"
+        }
     )
 
 DUMMY = {
@@ -35,7 +39,6 @@ async def check_dispo():
         await page.goto(START_URL)
         await page.wait_for_load_state("networkidle", timeout=5000)
 
-        # Select masqué
         await page.wait_for_selector("#selectTipoDocumento", state="attached", timeout=5000)
         await page.evaluate(f"""
             const sel = document.getElementById('selectTipoDocumento');
@@ -44,12 +47,11 @@ async def check_dispo():
             sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
         """)
 
-        # Remplissage texte
         await page.fill("input[name=nome]", DUMMY["nome"], timeout=3000)
         await page.fill("input[name=cognome]", DUMMY["cognome"], timeout=3000)
         await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"], timeout=3000)
 
-        # Activation + clic Continuer
+        # bypass reCAPTCHA
         await page.evaluate("""
             const btn = document.querySelector("button[value='continua']");
             if (btn) btn.removeAttribute('disabled');
@@ -60,13 +62,13 @@ async def check_dispo():
         await page.wait_for_url("**/sceltaComune**", timeout=5000)
         await page.wait_for_load_state("networkidle", timeout=5000)
 
-        # Suppression overlay/modal
+        # retirer overlay/modal
         await page.evaluate("""
             document.querySelectorAll('.black-overlay, #messageModalBox')
                     .forEach(el => el.remove());
         """)
 
-        # Typeahead Comune
+        # déclencher le typeahead
         await page.click("#comuneResidenzaInput", timeout=3000)
         await page.type("#comuneResidenzaInput", DUMMY["comune"], delay=100, timeout=3000)
         await page.wait_for_selector(
@@ -78,7 +80,7 @@ async def check_dispo():
             timeout=3000
         )
 
-        # Activation + clic Continuer
+        # Continuer
         await page.evaluate("""
             const btn2 = document.querySelector("button[value='continua']");
             if (btn2) btn2.removeAttribute('disabled');
@@ -93,8 +95,10 @@ async def check_dispo():
             cells = await tr.query_selector_all("td")
             texts = [await c.inner_text() for c in cells][:3]
             if len(texts) == 3:
-                sede, indirizzo, date = (t.strip() for t in texts)
-                dispo.append((sede, indirizzo, date))
+                address, availability, date = (t.strip() for t in texts)
+                # on ignore le message non pertinent
+                if not availability.startswith("La sede non offre al momento"):
+                    dispo.append((address, availability, date))
 
         await browser.close()
         return dispo
@@ -102,11 +106,15 @@ async def check_dispo():
 async def main():
     try:
         results = await check_dispo()
-        if results:
-            msg = "🔔 Nouveaux créneaux dispos :\n" + "\n".join(
-                f"- {s} | {i} | {d}" for s, i, d in results
-            )
-            send_telegram(msg)
+        if not results:
+            return  # rien à signaler
+        # formatage Markdown
+        msg_lines = ["*🔔 Nouveaux créneaux disponibles :*"]
+        for address, avail, date in results:
+            msg_lines.append(f"\n*• {address.replace('_','\\_')}*")
+            msg_lines.append(f"  • 📅 _Date_: `{date}`")
+            msg_lines.append(f"  • ℹ️ _Statut_: *{avail}*")
+        send_telegram("\n".join(msg_lines))
     except Exception as e:
         send_telegram(f"❌ Erreur : {e}")
 
