@@ -1,3 +1,4 @@
+```python
 import asyncio
 import os
 import re
@@ -27,7 +28,7 @@ START_URL = (
     "/cittadino/n/sc/wizardAppuntamentoCittadino/home"
 )
 
-async def check_dispo() -> list[tuple[str,str,str]]:
+async def check_dispo() -> list[tuple[str, str, str]]:
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page    = await browser.new_page()
@@ -35,7 +36,7 @@ async def check_dispo() -> list[tuple[str,str,str]]:
         # STEP 1: formulaire initial
         await page.goto(START_URL)
         await page.wait_for_load_state("networkidle", timeout=5000)
-        await page.wait_for_selector("#selectTipoDocumento", timeout=5000)
+        await page.wait_for_selector("#selectTipoDocumento", state="attached", timeout=5000)
         await page.evaluate(f"""
             const sel = document.getElementById('selectTipoDocumento');
             sel.value = '{DUMMY['motivo_value']}';
@@ -45,12 +46,14 @@ async def check_dispo() -> list[tuple[str,str,str]]:
         await page.fill("input[name=nome]", DUMMY["nome"], timeout=3000)
         await page.fill("input[name=cognome]", DUMMY["cognome"], timeout=3000)
         await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"], timeout=3000)
+        # activer et cliquer
         await page.evaluate("""document.querySelector("button[value='continua']").removeAttribute('disabled');""")
         await page.click("button[value='continua']", timeout=5000)
 
         # STEP 2: choix du Comune
         await page.wait_for_url("**/sceltaComune**", timeout=5000)
         await page.wait_for_load_state("networkidle", timeout=5000)
+        # enlever overlay & modal
         await page.evaluate("""document.querySelectorAll('.black-overlay, #messageModalBox').forEach(e=>e.remove());""")
         await page.click("#comuneResidenzaInput", timeout=3000)
         await page.type("#comuneResidenzaInput", DUMMY["comune"], delay=100, timeout=3000)
@@ -68,17 +71,17 @@ async def check_dispo() -> list[tuple[str,str,str]]:
         # STEP 3: extraction des créneaux
         await page.wait_for_load_state("networkidle", timeout=5000)
         dispo = []
-        rows = await page.query_selector_all("tbody tr")
-        for tr in rows:
-            # Nom de la sede
+        # pour chaque ligne du tableau
+        for tr in await page.query_selector_all("tbody tr"):
+            # nom de la sede
             th = await tr.query_selector("th[scope='row']")
             sede = (await th.inner_text()).strip() if th else ""
-            # Les td
+            # adresse et date : td[0] et td[2]
             tds = await tr.query_selector_all("td")
             if len(tds) >= 3:
                 indirizzo = (await tds[0].inner_text()).strip()
                 date_txt  = (await tds[2].inner_text()).strip()
-                # Filtrer par présence de dd/mm/yyyy
+                # ne garder que si on trouve dd/mm/yyyy
                 if re.search(r"\d{2}/\d{2}/\d{4}", date_txt):
                     dispo.append((sede, indirizzo, date_txt))
 
@@ -92,8 +95,7 @@ async def main():
             send_telegram("❌ AUCUN créneau disponible pour le moment.")
             return
 
-        # Formatage du message avec double saut de ligne
-        lines = [f"- {s} | {i} | {d}" for s,i,d in results]
+        lines = [f"- {s} | {i} | {d}" for s, i, d in results]
         msg   = "🔔 Nouveaux créneaux dispos :\n\n" + "\n\n".join(lines)
         send_telegram(msg)
 
@@ -102,3 +104,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+```
