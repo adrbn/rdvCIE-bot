@@ -75,14 +75,13 @@ async def check_dispo():
         await page.click("button[value='continua']", timeout=5000)
 
         # STEP 3
-        dispo = []
         try:
             await page.wait_for_selector("label.sr-only[for^='sede-']", timeout=5000)
         except PlaywrightTimeoutError:
-            # pas de créneaux du tout
             await browser.close()
             return []
 
+        dispo = []
         for lbl in await page.query_selector_all("label.sr-only[for^='sede-']"):
             tr    = await lbl.evaluate_handle("e=>e.closest('tr')")
             cells = await tr.query_selector_all("td")
@@ -97,20 +96,16 @@ async def check_dispo():
 async def main():
     try:
         results = await check_dispo()
-        if not results:
-            send_telegram("❌ AUCUN créneau disponible pour le moment.")
-            return
-
-        # on garde ceux qui contiennent une date dd/mm/yyyy
+        # on ne garde que ceux qui contiennent une date dd/mm/yyyy
         filtered = [
-            (s,i,d) for s,i,d in results
+            (s, i, d) for s, i, d in results
             if re.search(r"\d{2}/\d{2}/\d{4}", d)
         ]
+        # si pas de créneau, on ne fait rien du tout
         if not filtered:
-            send_telegram("❌ AUCUN créneau disponible pour le moment.")
             return
 
-        lines = [f"- {s} | {i} | {d}" for s,i,d in filtered]
+        lines = [f"- {s} | {i} | {d}" for s, i, d in filtered]
         msg   = "🔔 Nouveaux créneaux dispos :\n\n" + "\n\n".join(lines)
         send_telegram(msg)
 
