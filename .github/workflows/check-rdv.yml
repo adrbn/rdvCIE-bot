@@ -1,24 +1,33 @@
-name: CIE Watcher 24/7
+name: CIE Watcher 60s
 on:
   schedule:
-    - cron: '0 * * * *' # Se lance toutes les heures
-  workflow_dispatch:      # Pour le lancer manuellement
+    - cron: '0 * * * *' # Se lance automatiquement au début de chaque heure
+  workflow_dispatch:      # Permet de le lancer manuellement quand tu veux
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+    # On définit un timeout pour éviter que GitHub ne coupe brutalement le job
+    timeout-minutes: 60 
+
     steps:
       - uses: actions/checkout@v3
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-      - name: Install
+
+      - name: Install dependencies
         run: |
           pip install playwright requests
           playwright install chromium
-      - name: Run 2min Loop
+
+      - name: Run CIE Loop (60s)
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python check_rdv_bot.py
+        run: |
+          # On lance le script
+          # Il tournera en boucle grâce au 'while True' à l'intérieur du Python
+          python check_rdv_bot.py
