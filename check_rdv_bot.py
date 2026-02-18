@@ -2,115 +2,99 @@ import asyncio
 import os
 import re
 import requests
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+import time
+import random
+from playwright.async_api import async_playwright
 
 # ————— CONFIG —————
 TELEGRAM_TOKEN   = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
+BOOKING_URL      = "https://www.prenotazionicie.interno.gov.it/cittadino/n/sc/loginCittadino"
+
+# Pour éviter de renvoyer la même alerte en boucle
+LAST_DATE_FOUND = None
 
 def send_telegram(text: str):
     requests.post(
         f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        data={"chat_id": TELEGRAM_CHAT_ID, "text": text}
+        data={
+            "chat_id": TELEGRAM_CHAT_ID, 
+            "text": text, 
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": "true"
+        }
     )
-
-DUMMY = {
-    "motivo_value":   "1",               # 1 = Primo Documento
-    "nome":            "Mario",
-    "cognome":         "Rossi",
-    "codice_fiscale":  "RSSMRA80A01H501X",
-    "comune":          "ROMA"
-}
-
-START_URL = (
-    "https://www.prenotazionicie.interno.gov.it"
-    "/cittadino/n/sc/wizardAppuntamentoCittadino/home"
-)
 
 async def check_dispo():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        page    = await browser.new_page()
+        # User-agent pour passer inaperçu
+        context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36")
+        page = await context.new_page()
 
-        # STEP 1
-        await page.goto(START_URL)
-        await page.wait_for_load_state("networkidle", timeout=5000)
-        await page.wait_for_selector("#selectTipoDocumento", state="attached", timeout=5000)
-        await page.evaluate(f"""
-            const sel = document.getElementById('selectTipoDocumento');
-            sel.value = '{DUMMY['motivo_value']}';
-            sel.dispatchEvent(new Event('input', {{ bubbles: true }}));
-            sel.dispatchEvent(new Event('change', {{ bubbles: true }}));
-        """)
-        await page.fill("input[name=nome]", DUMMY["nome"], timeout=3000)
-        await page.fill("input[name=cognome]", DUMMY["cognome"], timeout=3000)
-        await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"], timeout=3000)
-        await page.evaluate("""
-            const b = document.querySelector("button[value='continua']");
-            if (b) b.removeAttribute('disabled');
-        """)
-        await page.click("button[value='continua']", timeout=5000)
-
-        # STEP 2
-        await page.wait_for_url("**/sceltaComune**", timeout=5000)
-        await page.wait_for_load_state("networkidle", timeout=5000)
-        await page.evaluate("""
-            document.querySelectorAll('.black-overlay, #messageModalBox')
-                    .forEach(e=>e.remove());
-        """)
-        await page.click("#comuneResidenzaInput", timeout=3000)
-        await page.type("#comuneResidenzaInput", DUMMY["comune"], delay=100, timeout=3000)
-        await page.wait_for_selector(
-            "comune-typeahead ul.typeahead.dropdown-menu li:has-text('ROMA')",
-            timeout=3000
-        )
-        await page.click(
-            "comune-typeahead ul.typeahead.dropdown-menu li:has-text('ROMA')",
-            timeout=3000
-        )
-        await page.evaluate("""
-            const b2 = document.querySelector("button[value='continua']");
-            if (b2) b2.removeAttribute('disabled');
-        """)
-        await page.click("button[value='continua']", timeout=5000)
-
-        # STEP 3
         try:
-            await page.wait_for_selector("label.sr-only[for^='sede-']", timeout=5000)
-        except PlaywrightTimeoutError:
-            await browser.close()
+            # STEP 1 : Identité
+            await page.goto("https://www.prenotazionicie.interno.gov.it/cittadino/n/sc/wizardAppuntamentoCittadino/home")
+            await page.select_option("#selectTipoDocumento", "1")
+            await page.fill("input[name=nome]", "Mario")
+            await page.fill("input[name=cognome]", "Rossi")
+            await page.fill("input[name=codiceFiscale]", "RSSMRA80A01H501X")
+            await page.evaluate('document.querySelector("button[value=\'continua\']").removeAttribute("disabled")')
+            await page.click("button[value='continua']")
+
+            # STEP 2 : Commune
+            await page.wait_for_url("**/sceltaComune**", timeout=10000)
+            await page.type("#comuneResidenzaInput", "ROMA", delay=100)
+            await page.click("ul.typeahead li:has-text('ROMA')")
+            await page.evaluate('document.querySelector("button[value=\'continua\']").removeAttribute("disabled")')
+            
+            # INTERCEPTION JSON (Le coeur du script)
+            async with page.expect_response(re.compile(r".*/getDisponibilitaSedi.*")) as response_info:
+                await page.click("button[value='continua']")
+                response = await response_info.value
+                json_data = await response.json()
+                return json_data.get('dati', [])
+        except Exception as e:
+            print(f"Erreur : {e}")
             return []
-
-        dispo = []
-        for lbl in await page.query_selector_all("label.sr-only[for^='sede-']"):
-            tr    = await lbl.evaluate_handle("e=>e.closest('tr')")
-            cells = await tr.query_selector_all("td")
-            texts = [await c.inner_text() for c in cells][:3]
-            if len(texts) == 3:
-                sede, indirizzo, date = (t.strip() for t in texts)
-                dispo.append((sede, indirizzo, date))
-
-        await browser.close()
-        return dispo
+        finally:
+            await browser.close()
 
 async def main():
-    try:
-        results = await check_dispo()
-        # on ne garde que ceux qui contiennent une date dd/mm/yyyy
-        filtered = [
-            (s, i, d) for s, i, d in results
-            if re.search(r"\d{2}/\d{2}/\d{4}", d)
-        ]
-        # si pas de créneau, on ne fait rien du tout
-        if not filtered:
-            return
+    global LAST_DATE_FOUND
+    print(f"🔍 Vérification @ {time.strftime('%H:%M:%S')}...")
+    
+    data_list = await check_dispo()
+    
+    # On cherche uniquement le Municipio I - Petroselli
+    target = next((item for item in data_list if "Municipio I" in item.get('nomeSede', '') and "Petroselli" in item.get('indirizzoSede', '')), None)
 
-        lines = [f"- {s} | {i} | {d}" for s, i, d in filtered]
-        msg   = "🔔 Nouveaux créneaux dispos :\n\n" + "\n\n".join(lines)
-        send_telegram(msg)
+    if target:
+        dispo_str = target.get('disponibilita', '')
+        # Si une date est présente (format 00/00/0000)
+        if re.search(r"\d{2}/\d{2}/\d{4}", dispo_str):
+            
+            # Anti-doublon : seulement si la date est différente de la dernière fois
+            if dispo_str != LAST_DATE_FOUND:
+                msg = (
+                    "🚨 **CRÉNEAU DISPONIBLE !**\n\n"
+                    f"🏛 *{target.get('nomeSede')}*\n"
+                    f"📍 {target.get('indirizzoSede')}\n"
+                    f"🗓 **{dispo_str}**\n\n"
+                    f"🚀 [RÉSERVER MAINTENANT]({BOOKING_URL})"
+                )
+                send_telegram(msg)
+                LAST_DATE_FOUND = dispo_str
+                print(f"✅ Alerte envoyée : {dispo_str}")
+    else:
+        print("ℹ️ Aucun créneau pour le Municipio I.")
 
-    except Exception as e:
-        send_telegram(f"❌ Erreur : {e}")
+async def run_loop():
+    while True:
+        await main()
+        wait = 120 + random.randint(1, 10) # 2mn environ
+        print(f"😴 Attente {wait}s...")
+        await asyncio.sleep(wait)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run_loop())
