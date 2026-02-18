@@ -38,57 +38,52 @@ START_URL = "https://www.prenotazionicie.interno.gov.it/cittadino/n/sc/wizardApp
 
 async def check_dispo():
     async with async_playwright() as p:
-        # Launch avec mode furtif pour éviter les blocages sur répétition
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        page    = await context.new_page()
+        # On ajoute des arguments pour masquer Playwright
+        browser = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        )
+        page = await context.new_page()
 
         try:
-            # STEP 1 : Formulaire initial
-            await page.goto(START_URL, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_selector("#selectTipoDocumento", timeout=10000)
+            # Navigation avec un timeout plus long
+            await page.goto(START_URL, wait_until="networkidle", timeout=60000)
             
-            await page.select_option("#selectTipoDocumento", DUMMY['motivo_value'])
+            # On attend que le sélecteur soit réellement visible
+            selector = "#selectTipoDocumento"
+            await page.wait_for_selector(selector, state="visible", timeout=20000)
+            
+            await page.select_option(selector, DUMMY['motivo_value'])
+            await asyncio.sleep(1) # Pause humaine
+            
             await page.fill("input[name=nome]", DUMMY["nome"])
             await page.fill("input[name=cognome]", DUMMY["cognome"])
             await page.fill("input[name=codiceFiscale]", DUMMY["codice_fiscale"])
             
             await page.evaluate('document.querySelector("button[value=\'continua\']").removeAttribute("disabled")')
+            await asyncio.sleep(0.5)
             await page.click("button[value='continua']")
 
-            # STEP 2 : Choix de la commune
-            await page.wait_for_url("**/sceltaComune**", timeout=10000)
-            await page.type("#comuneResidenzaInput", DUMMY["comune"], delay=20) # Frappe ultra rapide
+            # STEP 2
+            await page.wait_for_url("**/sceltaComune**", timeout=20000)
+            await page.fill("#comuneResidenzaInput", DUMMY["comune"])
+            await asyncio.sleep(1)
             await page.click("ul.typeahead li:has-text('ROMA')")
             
             await page.evaluate('document.querySelector("button[value=\'continua\']").removeAttribute("disabled")')
-            await page.click("button[value='continua']")
-
-            # STEP 3 : Extraction propre (Municipio I uniquement)
-            await page.wait_for_selector("label.sr-only[for^='sede-']", timeout=15000)
-
-            dispo = []
-            labels = await page.query_selector_all("label.sr-only[for^='sede-']")
             
-            for lbl in labels:
-                tr = await lbl.evaluate_handle("e => e.closest('tr')")
-                cells = await tr.query_selector_all("td")
-                
-                if len(cells) >= 4:
-                    sede = await cells[0].inner_text()
-                    addr = await cells[1].inner_text()
-                    # On prend l'index 3 pour ignorer la colonne "NO"
-                    date = await cells[3].inner_text() 
-
-                    dispo.append((sede.strip(), addr.strip(), date.strip()))
-
-            await browser.close()
-            return dispo
+            async with page.expect_response(re.compile(r".*/getDisponibilitaSedi.*"), timeout=20000) as response_info:
+                await page.click("button[value='continua']")
+                response = await response_info.value
+                json_data = await response.json()
+                return json_data.get('dati', [])
 
         except Exception as e:
-            print(f"Erreur technique : {e}")
-            await browser.close()
+            # On log l'erreur mais on ne crash pas le script
+            print(f"⚠️ Scan ignoré (site instable ou bloqué) : {e}")
             return []
+        finally:
+            await browser.close()
 
 async def main_task():
     global LAST_DATE_FOUND
