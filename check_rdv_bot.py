@@ -11,7 +11,6 @@ TELEGRAM_TOKEN   = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 BOOKING_URL      = "https://www.prenotazionicie.interno.gov.it/cittadino/n/sc/loginCittadino"
 
-# Pour éviter de renvoyer la même alerte en boucle
 LAST_DATE_FOUND = None
 
 def send_telegram(text: str):
@@ -27,35 +26,42 @@ def send_telegram(text: str):
 
 async def check_dispo():
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        # User-agent pour passer inaperçu
-        context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36")
+        # Ajout d'arguments pour éviter la détection robot
+        browser = await p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        )
         page = await context.new_page()
 
         try:
-            # STEP 1 : Identité
-            await page.goto("https://www.prenotazionicie.interno.gov.it/cittadino/n/sc/wizardAppuntamentoCittadino/home")
+            # STEP 1 : Identité avec attente renforcée
+            await page.goto("https://www.prenotazionicie.interno.gov.it/cittadino/n/sc/wizardAppuntamentoCittadino/home", wait_until="networkidle", timeout=60000)
+            
+            # Correction du Timeout : on attend que le sélecteur soit réellement prêt
+            await page.wait_for_selector("#selectTipoDocumento", state="visible", timeout=30000)
             await page.select_option("#selectTipoDocumento", "1")
+            
             await page.fill("input[name=nome]", "Mario")
             await page.fill("input[name=cognome]", "Rossi")
             await page.fill("input[name=codiceFiscale]", "RSSMRA80A01H501X")
+            
             await page.evaluate('document.querySelector("button[value=\'continua\']").removeAttribute("disabled")')
             await page.click("button[value='continua']")
 
             # STEP 2 : Commune
-            await page.wait_for_url("**/sceltaComune**", timeout=10000)
-            await page.type("#comuneResidenzaInput", "ROMA", delay=100)
+            await page.wait_for_url("**/sceltaComune**", timeout=20000)
+            await page.fill("#comuneResidenzaInput", "ROMA")
             await page.click("ul.typeahead li:has-text('ROMA')")
             await page.evaluate('document.querySelector("button[value=\'continua\']").removeAttribute("disabled")')
             
-            # INTERCEPTION JSON (Le coeur du script)
-            async with page.expect_response(re.compile(r".*/getDisponibilitaSedi.*")) as response_info:
+            # INTERCEPTION JSON
+            async with page.expect_response(re.compile(r".*/getDisponibilitaSedi.*"), timeout=30000) as response_info:
                 await page.click("button[value='continua']")
                 response = await response_info.value
                 json_data = await response.json()
                 return json_data.get('dati', [])
         except Exception as e:
-            print(f"Erreur : {e}")
+            print(f"⚠️ Erreur de navigation (Timeout possible) : {e}")
             return []
         finally:
             await browser.close()
@@ -66,18 +72,15 @@ async def main():
     
     data_list = await check_dispo()
     
-    # On cherche uniquement le Municipio I - Petroselli
+    # Filtre strict : Municipio I - Via Luigi Petroselli
     target = next((item for item in data_list if "Municipio I" in item.get('nomeSede', '') and "Petroselli" in item.get('indirizzoSede', '')), None)
 
     if target:
         dispo_str = target.get('disponibilita', '')
-        # Si une date est présente (format 00/00/0000)
         if re.search(r"\d{2}/\d{2}/\d{4}", dispo_str):
-            
-            # Anti-doublon : seulement si la date est différente de la dernière fois
             if dispo_str != LAST_DATE_FOUND:
                 msg = (
-                    "🚨 **CRÉNEAU DISPONIBLE !**\n\n"
+                    "🚨 **CRÉNEAU MUNICIPIO I DISPONIBLE !**\n\n"
                     f"🏛 *{target.get('nomeSede')}*\n"
                     f"📍 {target.get('indirizzoSede')}\n"
                     f"🗓 **{dispo_str}**\n\n"
@@ -92,7 +95,8 @@ async def main():
 async def run_loop():
     while True:
         await main()
-        wait = 120 + random.randint(1, 10) # 2mn environ
+        # Délai de 2 minutes avec jitter pour rester discret
+        wait = 120 + random.randint(1, 15)
         print(f"😴 Attente {wait}s...")
         await asyncio.sleep(wait)
 
